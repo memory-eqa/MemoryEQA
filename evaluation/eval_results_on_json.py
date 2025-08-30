@@ -33,6 +33,7 @@ def load_jsons(files_path):
     """
     all_data = []
     for file_path in files_path:
+        print(file_path)
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
         else:
@@ -44,7 +45,19 @@ def evaluate(files_path):
     samples = load_jsons(files_path)
     results = []
     choices = ['a', 'b', 'c', 'd']
+
+    path_length = 0
+    time_comsume = 0
+    input_token_usage = 0
+    output_token_usage = 0
+
     for data in samples:
+
+        path_length += data["summary"]["path_length"]
+        time_comsume += data["summary"]["all_time_comsume"]
+        input_token_usage += data["summary"]["input_token_usage"]
+        output_token_usage += data["summary"]["output_token_usage"]
+
         result = {}
 
         meta_data = data['meta']
@@ -52,7 +65,17 @@ def evaluate(files_path):
         max_step = meta_data['max_steps']
         answer = meta_data['answer']
 
+        memory_time = 0
+        planner_time = 0
+        stop_time = 0
+        answering_time = 0
+
         for step in step_data:
+            memory_time += step.get('memory_time', 0)
+            planner_time += step.get('planner_time', 0)
+            stop_time += step.get('stop_time', 0)
+            answering_time += step.get('answering_time', 0)
+            
             step_num = step['step'] + 1
             res = step['smx_vlm_pred']
             if isinstance(res, str):
@@ -71,6 +94,25 @@ def evaluate(files_path):
             result["is_success"] = is_success
         results.append(result)
 
+    path_length /= len(samples)
+    time_comsume /= len(samples)
+    input_token_usage /= len(samples)
+    output_token_usage /= len(samples)
+
+    memory_time /= len(samples)
+    planner_time /= len(samples)
+    stop_time /= len(samples)
+    answering_time /= len(samples)
+
+    print(f"Average path length: {path_length:.2f}")
+    print(f"Average input token usage: {input_token_usage:.2f}")
+    print(f"Average output token usage: {output_token_usage:.2f}")
+    print(f"Average time comsume: {time_comsume:.2f}")
+    print(f"Average memory time: {memory_time:.2f}")
+    print(f"Average planner time: {planner_time:.2f}")
+    print(f"Average stop time: {stop_time:.2f}")
+    print(f"Average answering time: {answering_time:.2f}")
+
     results_num = len(results)
     norm_steps = 0
     norm_early_steps = 0
@@ -84,9 +126,14 @@ def evaluate(files_path):
             norm_early_steps += result.get("norm_early_success_step")
             early_count += 1
 
+    if success_count == 0:
+        print("No successful results found.")
+        return
+    
     print(f"总共有{results_num}个结果，其中成功的有{success_count}个。")
     print(f"成功率为{success_count/results_num:.2%}。")
     print(f"平均归一化成功步数为{norm_steps/success_count:.2}。")
+
     if early_count > 0:
         print(f"总共有{early_count}个结果提成功。")
         print(f"提早成功率为{early_count/results_num:.2%}")
@@ -94,8 +141,8 @@ def evaluate(files_path):
 
 if __name__ == '__main__':
     files_path = [
-        'results/full-memory/HM-EQA/HM-EQA_gpu0/results.json',
-        "results/full-memory/HM-EQA/HM-EQA_gpu3/results-480.json",
-        "results/full-memory/HM-EQA/HM-EQA_gpu2/results-360.json"
+        "results/full-memory/HM-EQA/HM-EQA_gpu0/results-0.json",
+        "results/full-memory/HM-EQA/HM-EQA_gpu2/results-400.json",
+        "results/full-memory/HM-EQA/HM-EQA_gpu5/results-1000.json",
     ]
     evaluate(files_path)

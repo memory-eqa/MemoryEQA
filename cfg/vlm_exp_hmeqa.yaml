@@ -1,10 +1,10 @@
 # General
 seed: 42
 exp_name: HM-EQA
-output_parent_dir: results/Qwen2VL
-question_data_path: ./data/MT-HM3D/MT-HM3D-filtered-new.csv
-init_pose_data_path: ./data/scene_init_poses_all.csv
-scene_data_path: [./data/HM3D, ./data/ScanNet/V2/scans, ./data/ScanNet/V2/scans_trainval]
+output_parent_dir: results/HM-EQA
+question_data_path: ./data/HM-EQA/questions.csv
+init_pose_data_path: ./data/scene_init_poses.csv
+scene_data_path: [/data/zml/datasets/EmbodiedQA/HM3D]
 save_obs: true
 save_freq: 20
 

@@ -33,6 +33,9 @@ class VLM:
 
         logging.info(f"Loaded VLM in {time.time() - start_time:.3f}s")
 
+        self.input_token_usage = 0
+        self.output_token_usage = 0
+
     def generate(self, prompt, image, T=0.4, max_tokens=512):
         prompt_builder = self.model.get_prompt_builder()
         prompt_builder.add_turn(role="human", message=prompt)
@@ -102,13 +105,17 @@ class VLM:
         inputs = inputs.to(device)
 
         # Inference: Generation of the output
-        generated_ids = self.model.generate(**inputs, max_new_tokens=128)
+        generated_ids = self.model.generate(**inputs, max_new_tokens=512)
         generated_ids_trimmed = [
             out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
         output_text = self.processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
+        
+        self.input_token_usage += inputs.input_ids.shape[1]
+        self.output_token_usage += np.array([gen_ids.shape[0] for gen_ids in generated_ids_trimmed]).sum()
+
         return output_text
 
     def get_loss(self, image, prompt, tokens, get_smx=True, T=1):

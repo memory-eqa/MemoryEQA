@@ -5,7 +5,7 @@ Run EQA in Habitat-Sim with VLM exploration.
 
 import os
 import json
-
+import torch
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"  # disable warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HABITAT_SIM_LOG"] = (
@@ -500,7 +500,6 @@ def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
     cfg = OmegaConf.load(cfg_file)
     OmegaConf.resolve(cfg)
-
     # Set up logging
     cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}/{cfg.exp_name}_gpu{gpu_id}")
     if not os.path.exists(cfg.output_dir):

@@ -18,6 +18,7 @@ np.set_printoptions(precision=3)
 import csv
 import pickle
 import logging
+logging.basicConfig(format='%(message)s',level=logging.INFO)
 import math
 import quaternion
 import cv2
@@ -43,10 +44,12 @@ from src.utils import (
 )
 
 from src.vlm import VLM
+# from src.llm_engine.spatial_bot import VLM
 from src.knowledgebase import DynamicKnowledgeBase
 from ultralytics import YOLO
 
 import matplotlib.pyplot as plt
+import time
 
 class MemoryEQA():
     def __init__(self, cfg, gpu_id):
@@ -84,6 +87,8 @@ class MemoryEQA():
 
         # init VLM model
         self.vlm = VLM(cfg.vlm, device=self.device)
+        # self.vlm = VLM(device=self.device)
+
         # init memory module
         if cfg.rag.use_rag:
             self.knowledge_base = DynamicKnowledgeBase(cfg.rag, device=self.device)
@@ -153,7 +158,7 @@ class MemoryEQA():
         # Extract question
         scene = question_data["scene"]
         floor = question_data["floor"]
-        scene_floor = scene + "_" + floor
+        scene_floor = scene + "_" + "0"
         question = question_data["question"]
         choices = [c.strip("'\"") for c in question_data["choices"].strip("[]").split(", ")]
         answer = question_data["answer"]
@@ -246,12 +251,25 @@ class MemoryEQA():
         # Run steps
         pts_pixs = np.empty((0, 2))  # for plotting path on the image
         smx_vlm_pred = None
+
+        shortest_path = habitat_sim.ShortestPath()
+        path_length = 0
+        time_comsume = 0
+
+        all_time = time.time()
         for cnt_step in range(num_step):
             logging.info(f"\n== step: {cnt_step}")
-
             # Save step info and set current pose
             step_name = f"step_{cnt_step}"
             logging.info(f"Current pts: {pts}")
+            
+            planner_time = 0
+
+            shortest_path.requested_start = agent_state.position
+            shortest_path.requested_end = pts
+            found = self.simulator.pathfinder.find_path(shortest_path)
+            if found:
+                path_length += shortest_path.geodesic_distance
 
             agent_state.position = pts
             agent_state.rotation = rotation
@@ -276,11 +294,13 @@ class MemoryEQA():
             obs = self.simulator.get_sensor_observations()
             rgb = obs["color_sensor"]
             depth = obs["depth_sensor"]
-
+            depth_im = Image.fromarray(depth)
             rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
 
             room = self.vlm.get_response(rgb_im, "What room are you most likely to be in at the moment? Answer with a phrase", [], device=self.device)
-
+            # room = self.vlm.get_response("What room are you most likely to be in at the moment? Answer with a phrase", rgb_im, depth_im)
+            
+            t = time.time()
             objects = self.detector(rgb_im)[0]
             objs_info = []
             for box in objects.boxes:
@@ -290,6 +310,8 @@ class MemoryEQA():
                 x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
                 obj_im = rgb_im.crop((x1, y1, x2, y2))
                 obj_caption = self.vlm.get_response(obj_im, self.prompt_caption, [], device=self.device)
+                # obj_caption = self.vlm.get_response(self.prompt_caption, obj_im, depth_im)
+
                 # 中心点转换世界坐标
                 x, y = (x1 + x2) / 2, (y1 + y2) / 2
                 world_pos = pixel2world(x, y, depth[int(y), int(x)], cam_pose)
@@ -299,6 +321,7 @@ class MemoryEQA():
 
             if self.cfg.rag.use_rag:
                 caption = self.vlm.get_response(rgb_im, self.prompt_caption, [], device=self.device)
+                # caption = self.vlm.get_response(self.prompt_caption, rgb_im, depth_im)
 
             if self.cfg.save_obs:
                 save_rgbd(rgb, depth, os.path.join(episode_data_dir, f"{cnt_step}_rgbd.png"))
@@ -308,12 +331,16 @@ class MemoryEQA():
                     # 构建目标信息
                     objs_str = json.dumps(objs_info)
                     self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. {caption}. Objects: {objs_str}", rgb_im, device=self.device)
+                    # self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. Objects: {objs_str}", rgb_im, device=self.device)
+            memory_time = time.time() - t
+            result["step"][cnt_step]["memory_time"] = float(memory_time)
 
             num_black_pixels = np.sum(
                 np.sum(rgb, axis=-1) == 0
             )  # sum over channel first
             if num_black_pixels < self.cfg.black_pixel_ratio * self.img_width * self.img_height:
                 # TSDF fusion
+                t = time.time()
                 tsdf_planner.integrate(
                     color_im=rgb,
                     depth_im=depth,
@@ -323,24 +350,38 @@ class MemoryEQA():
                     margin_h=int(self.cfg.margin_h_ratio * self.img_height),
                     margin_w=int(self.cfg.margin_w_ratio * self.img_width),
                 )
+                planner_time += (time.time() - t)
+                result["step"][cnt_step]["planner_time"] = float(planner_time)
+                
 
                 # 模型判断是否有信心回答当前问题
+                t = time.time()
                 if self.cfg.rag.use_rag:
                     kb, _ = self.knowledge_base.search(self.prompt_rel.format(question), 
                                                rgb_im, 
                                                top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                device=self.device)
                 smx_vlm_rel = self.vlm.get_response(rgb_im, self.prompt_rel.format(question), kb, device=self.device)[0].strip(".")
-                logging.info(f"Rel - Prob: {smx_vlm_rel}")
+                # smx_vlm_rel = self.vlm.get_response(self.prompt_rel.format(question), rgb_im, depth_im).strip(".")
 
+                logging.info(f"Rel - Prob: {smx_vlm_rel}")
+                stop_time = time.time() - t
+                result["step"][cnt_step]["stop_time"] = float(stop_time)
+
+                t = time.time()
                 logging.info(f"Prompt Pred: {self.prompt_question.format(vlm_question)}")
                 if self.cfg.rag.use_rag:
                     kb, _ = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
                                                rgb_im, 
                                                top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                device=self.device)
+                
                 smx_vlm_pred = self.vlm.get_response(rgb_im, self.prompt_question.format(vlm_question), kb, device=self.device)[0].strip(".")
+                # smx_vlm_pred = self.vlm.get_response(self.prompt_question.format(vlm_question), rgb_im, depth_im).strip(".")
+
                 logging.info(f"Pred - Prob: {smx_vlm_pred}")
+                answering_time = time.time() - t
+                result["step"][cnt_step]["answering_time"] = float(answering_time)
 
                 # save data
                 result["step"][cnt_step]["smx_vlm_rel"] = smx_vlm_rel[0]
@@ -354,6 +395,7 @@ class MemoryEQA():
                 # Get frontier candidates
                 prompt_points_pix = []
                 if self.cfg.use_active:
+                    t = time.time()
                     prompt_points_pix, fig = (
                         tsdf_planner.find_prompt_points_within_view(
                             pts_normal,
@@ -364,6 +406,8 @@ class MemoryEQA():
                             **self.cfg.visual_prompt,
                         )
                     )
+                    planner_time = (time.time() - t)
+                    result["step"][cnt_step]["planner_time"] = float(planner_time)
                     fig.tight_layout()
                     plt.savefig(os.path.join(episode_data_dir, "prompt_points.png".format(cnt_step)))
                     plt.close()
@@ -379,6 +423,7 @@ class MemoryEQA():
                                                os.path.join(episode_data_dir, f"{cnt_step}_draw.png"))
 
                     # get VLM reasoning for exploring
+                    t = time.time()
                     if self.cfg.use_lsv:
                         if self.cfg.rag.use_rag:
                             kb, _ = self.knowledge_base.search(self.prompt_lsv.format(question), 
@@ -386,6 +431,7 @@ class MemoryEQA():
                                                        top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                        device=self.device)
                         response = self.vlm.get_response(rgb_im_draw, self.prompt_lsv.format(question), kb, device=self.device)[0]
+                        # response = self.vlm.get_response(self.prompt_lsv.format(question), rgb_im_draw, depth_im)
                         lsv = np.zeros(actual_num_prompt_points)
                         for i in range(actual_num_prompt_points):
                             if response == self.letters[i]:
@@ -404,6 +450,7 @@ class MemoryEQA():
                                                        top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                        device=self.device)
                         response = self.vlm.get_response(rgb_im, self.prompt_gsv.format(question), kb, device=self.device)[0].strip(".")
+                        # response = self.vlm.get_response(self.prompt_gsv.format(question), rgb_im, depth_im).strip(".")
                         gsv = np.zeros(2)
                         if response == "Yes":
                             gsv[0] = 1
@@ -421,6 +468,8 @@ class MemoryEQA():
                         radius=1.0,
                         obs_weight=1.0,
                     )  # voxel locations already saved in tsdf class
+                    planner_time += (time.time() - t)
+                    result["step"][cnt_step]["planner_time"] = float(planner_time)
 
             else:
                 logging.info("Skipping black image!")
@@ -453,6 +502,8 @@ class MemoryEQA():
                 quat_from_angle_axis(angle, np.array([0, 1, 0]))
             ).tolist()
 
+        time_comsume += (time.time() - all_time)
+
         # Final prediction
         if cnt_step == num_step - 1:
             logging.info("Max step reached!")
@@ -462,6 +513,7 @@ class MemoryEQA():
                                            top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                            device=self.device)
             smx_vlm_pred = self.vlm.get_response(rgb_im, self.prompt_question.format(vlm_question), kb, device=self.device)[0].strip(".")
+            # smx_vlm_pred = self.vlm.get_response(self.prompt_question.format(vlm_question), rgb_im, depth_im).strip(".")
             logging.info(f"Pred - Prob: {smx_vlm_pred}")
 
         if smx_vlm_pred is not None:
@@ -477,44 +529,19 @@ class MemoryEQA():
         result["summary"]["smx_vlm_pred"] = smx_vlm_pred
         result["summary"]["smx_vlm_pred"] = smx_vlm_pred
         result["summary"]["is_success"] = is_success
+        # result["summary"]["input_token_usage"] = int(self.vlm.input_token_usage)
+        # result["summary"]["output_token_usage"] = int(self.vlm.output_token_usage)
+        result["summary"]["path_length"] = float(path_length)
+        result["summary"]["all_time_comsume"] = float(time_comsume)
 
         return result
-
-
-def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
-    from omegaconf import OmegaConf
-    """在指定 GPU 上运行 main(cfg)，并传递 GPU 信息"""
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
-    cfg = OmegaConf.load(cfg_file)
-    OmegaConf.resolve(cfg)
-
-    # Set up logging
-    cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}/{cfg.exp_name}_gpu{gpu_id}")
-    if not os.path.exists(cfg.output_dir):
-        os.makedirs(cfg.output_dir, exist_ok=True)  # recursive
-    logging_path = os.path.join(cfg.output_dir, f"log_{gpu_id}.log")
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        handlers=[
-            logging.FileHandler(logging_path, mode="w"),
-            logging.StreamHandler(),
-        ],
-    )
-
-    # 将 GPU 信息传递给 main 函数
-    logging.info(f"***** Running {cfg.exp_name} on GPU {gpu_id}/{gpu_count} *****")
-    main(cfg, gpu_id, gpu_index, gpu_count)
 
 
 if __name__ == "__main__":
     import argparse
     import os
     import logging
-    from multiprocessing import Process, set_start_method
-
-    # 设置多进程启动方式为 spawn
-    set_start_method("spawn", force=True)
+    from omegaconf import OmegaConf
 
     # Parse arguments
     parser = argparse.ArgumentParser()
@@ -522,18 +549,22 @@ if __name__ == "__main__":
     parser.add_argument("-gpus", "--gpu_ids", help="Comma-separated GPU IDs to use (e.g., '0,1,2')", type=str, default="0")
     args = parser.parse_args()
 
-    # Get list of GPUs
-    gpu_ids = [int(gpu_id) for gpu_id in args.gpu_ids.split(",")]
-    gpu_count = len(gpu_ids)  # 计算 GPU 数量
+    cfg = OmegaConf.load(args.cfg_file)
+    OmegaConf.resolve(cfg)
 
-    # Launch processes for each GPU
-    processes = []
-    for gpu_id in gpu_ids:
-        gpu_index = gpu_ids.index(gpu_id)
-        p = Process(target=run_on_gpu, args=(gpu_id, gpu_index, gpu_count, args.cfg_file))
-        p.start()
-        processes.append(p)
+    cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}/{cfg.exp_name}")
+    memory_eqa = MemoryEQA(cfg, 2)
 
-    # Wait for all processes to finish
-    for p in processes:
-        p.join()
+    with open(cfg.question_data_path) as f:
+        questions_data = [
+            {k: v for k, v in row.items()}
+            for row in csv.DictReader(f, skipinitialspace=True)
+        ]
+
+    all_results = []
+    for question_ind, data in enumerate(questions_data):
+        result = memory_eqa.run(data, question_ind)
+        all_results.append(result)
+
+    with open(os.path.join(cfg.output_dir, "results.json"), "w") as f:
+        json.dump(all_results, f, indent=4)

@@ -1,2 +1,2 @@
 device: 'auto'
-model_name_or_path: /home/zml/model/Qwen2-VL-72B-Instruct-GPTQ-Int4
+model_name_or_path: /mynvme0/models/Qwen2-VL/Qwen2-VL-7B-Instruct
