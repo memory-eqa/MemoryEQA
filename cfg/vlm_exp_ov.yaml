@@ -1,7 +1,7 @@
 # General
 seed: 42
-exp_name: HM-EQA
-output_parent_dir: results/Qwen2VL
+exp_name: MT-HM3D-new
+output_parent_dir: results/Qwen3VL/
 question_data_path: ./data/MT-HM3D/MT-HM3D-filtered-new.csv
 init_pose_data_path: ./data/scene_init_poses_all.csv
 scene_data_path: [./data/HM3D, ./data/ScanNet/V2/scans, ./data/ScanNet/V2/scans_trainval]
@@ -11,20 +11,20 @@ save_freq: 20
 # Question answering
 vlm:
   device: 'cuda'
-  model_name_or_path: /home/zml/model/Qwen2-VL-7B-Instruct
+  model_name_or_path: /mynvme0/models/Qwen/Qwen3-VL-8B-Instruct
 
 rag:
-  use_rag: true
+  use_rag: True
   text: '/data/zml/models/openai/clip-vit-large-patch14'
   visual: '/data/zml/models/openai/clip-vit-large-patch14'
   dim: 1536
   max_retrieval_num: 5
 
 prompt:
-  caption: f"Describe this image."
+  caption: f"Briefly describe this image."
   relevent: "\nConsider the question: '{}'. How confident are you in answering this question from your current perspective?\nA. Very low\nB. Low\nC. Medium\nD. High\nE. Very high\nAnswer with the option's letter from the given choices directly."
   # relevent: "\nConsider the question: '{}'. Are you confident about answering the question with the current view? Answer with Yes or No."
-  question: "{}\nAnswer with the option's letter from the given choices directly."
+  question: "{}\nAnswer with the option's single letter from the given choices directly."
   # question: "{}\nAnswer with the brief sentence."
   local_sem: "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Provide reasons and answer with a single letter."
   global_sem: "\nConsider the question: '{}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."

@@ -1,10 +1,10 @@
 # General
 seed: 42
-exp_name: HM-EQA
-output_parent_dir: results/Qwen2VL
-question_data_path: ./data/MT-HM3D/MT-HM3D-filtered-new.csv
+exp_name: reacteqa_seen
+output_parent_dir: results
+question_data_path: data/reacteqa_seen.csv
 init_pose_data_path: ./data/scene_init_poses_all.csv
-scene_data_path: [./data/HM3D, ./data/ScanNet/V2/scans, ./data/ScanNet/V2/scans_trainval]
+scene_data_path: [./data/HM3D]
 save_obs: true
 save_freq: 20
 

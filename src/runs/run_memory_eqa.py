@@ -7,6 +7,7 @@ import numpy as np
 import logging
 import csv
 import json
+import jsonlines
 
 from tqdm import tqdm
 from src.modeling.memory_eqa import MemoryEQA
@@ -22,7 +23,7 @@ os.environ["MAGNUM_LOG"] = "quiet"
 def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
     from omegaconf import OmegaConf
     """在指定 GPU 上运行 main(cfg)，并传递 GPU 信息"""
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
     cfg = OmegaConf.load(cfg_file)
     OmegaConf.resolve(cfg)
 
@@ -59,9 +60,11 @@ def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
         data = questions_data[question_ind]
         result = memory_eqa.run(data, question_ind)
         results_all.append(result)
-        if question_ind % cfg.save_freq == 0:
-            with open(os.path.join(cfg.output_dir, f"results-{question_ind}.json"), "w") as f:
-                json.dump(results_all, f, indent=4)
+        
+        # with open(os.path.join(cfg.output_dir, f"results.jsonl"), "w") as f:
+        #     json.dump(results_all, f, indent=4)
+        with jsonlines.open(os.path.join(cfg.output_dir, f"results.jsonl"), mode="a") as writer:
+            writer.write(result)
 
     with open(os.path.join(cfg.output_dir, "results.json"), "w") as f:
         json.dump(results_all, f, indent=4)

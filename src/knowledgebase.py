@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 import json
 import math
-
+import logging
 from PIL import Image
 import torch
 
@@ -30,7 +30,7 @@ class DynamicKnowledgeBase:
         self.index = faiss.IndexFlatL2(cfg.dim)
         self.data = []  # 存储文本和图像的信息
 
-    def update_memory(self, text, image, topk, lambda_sim=0.5, device="cuda"):
+    def update_memory(self, text, image, topk=5, lambda_sim=0.5, device="cuda"):
         memories, indice = self.search(text, image, topk, device)
         if len(memories) == 0:
             return 
@@ -77,13 +77,9 @@ class DynamicKnowledgeBase:
                 similarity = 0
                 
             if similarity > 0.9:
-                # 删除记忆索引
+                logging.info(f"Updating knowledge base...")
                 self.index.remove_ids(np.array([ind]))
-                # 从数据中删除
-                # if memory in self.data:
-                #     self.data.remove(memory)
-                # 添加新的记忆
-                self.add_to_knowledge_base(text, image, device)
+        # self.add_to_knowledge_base(text, image, device)
 
     def add_to_knowledge_base(self, text=None, image=None, device='cuda'):
         # 更新记忆

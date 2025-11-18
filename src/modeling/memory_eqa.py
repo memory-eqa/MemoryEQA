@@ -23,6 +23,7 @@ import math
 import quaternion
 import cv2
 import matplotlib.pyplot as plt
+import ast
 from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 import habitat_sim
@@ -99,7 +100,7 @@ class MemoryEQA():
         self.letters = ["A", "B", "C", "D"]  # always four
         self.fnt = ImageFont.truetype("data/Open_Sans/static/OpenSans-Regular.ttf", 30,)
 
-        self.confident_threshold = ["c", "d", "e", "yes"]
+        self.confident_threshold = ["b", "c", "d", "e", "yes"]
 
     def init_sim(self, scene):
         # Set up scene in Habitat
@@ -153,7 +154,6 @@ class MemoryEQA():
     def prepare_data(self, question_data, question_ind):
         if self.cfg.rag.use_rag:
             self.knowledge_base.clear()
-        kb = []
 
         # Extract question
         scene = question_data["scene"]
@@ -165,6 +165,8 @@ class MemoryEQA():
 
         init_pts = self.init_pose_data[scene_floor]["init_pts"]
         init_angle = self.init_pose_data[scene_floor]["init_angle"]
+        # init_pts = ast.literal_eval(question_data["init_pos"])
+        # init_angle = float(question_data["init_angle"])
         
         logging.info(f"\n========\nIndex: {question_ind} Scene: {scene} Floor: {floor}")
 
@@ -205,7 +207,11 @@ class MemoryEQA():
         # init planner
         tsdf_planner = self.init_planner(tsdf_bnds, pts_normal)
 
+        # path_length_gt = float(question_data["trajectory_lenth"])
+        # related_objs = question_data["related_objs"]
         metadata = {
+            # "related_objs": related_objs,
+            # "shortest_length": path_length_gt,
             "question_ind": question_ind,
             "org_question": question,
             "question": vlm_question,
@@ -297,7 +303,7 @@ class MemoryEQA():
             depth_im = Image.fromarray(depth)
             rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
 
-            room = self.vlm.get_response(rgb_im, "What room are you most likely to be in at the moment? Answer with a phrase", [], device=self.device)
+            room = self.vlm.get_response(rgb_im, "What room are you most likely to be in at the moment? Answer with a phrase", [], device=self.device)[0]
             # room = self.vlm.get_response("What room are you most likely to be in at the moment? Answer with a phrase", rgb_im, depth_im)
             
             t = time.time()
@@ -309,7 +315,7 @@ class MemoryEQA():
                 # 裁剪目标区域进行描述
                 x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
                 obj_im = rgb_im.crop((x1, y1, x2, y2))
-                obj_caption = self.vlm.get_response(obj_im, self.prompt_caption, [], device=self.device)
+                obj_caption = self.vlm.get_response(obj_im, f"Describe this {cls} in a short sentence.", [], device=self.device)[0]
                 # obj_caption = self.vlm.get_response(self.prompt_caption, obj_im, depth_im)
 
                 # 中心点转换世界坐标
@@ -317,21 +323,24 @@ class MemoryEQA():
                 world_pos = pixel2world(x, y, depth[int(y), int(x)], cam_pose)
                 world_pos = pos_normal_to_habitat(world_pos)
                 # 保存目标信息
-                objs_info.append({"room": room, "cls": cls ,"caption": obj_caption[0], "pos": world_pos.tolist()})
-
-            if self.cfg.rag.use_rag:
-                caption = self.vlm.get_response(rgb_im, self.prompt_caption, [], device=self.device)
-                # caption = self.vlm.get_response(self.prompt_caption, rgb_im, depth_im)
+                obj_dict = {"room": room, "cls": cls ,"caption": obj_caption, "pos": world_pos.tolist()}
+                objs_info.append(obj_dict)
 
             if self.cfg.save_obs:
                 save_rgbd(rgb, depth, os.path.join(episode_data_dir, f"{cnt_step}_rgbd.png"))
-                if self.cfg.rag.use_rag:
-                    rgb_path = os.path.join(episode_data_dir, "{}.png".format(cnt_step))
-                    plt.imsave(rgb_path, rgb)
-                    # 构建目标信息
-                    objs_str = json.dumps(objs_info)
-                    self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. {caption}. Objects: {objs_str}", rgb_im, device=self.device)
-                    # self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. Objects: {objs_str}", rgb_im, device=self.device)
+
+            if self.cfg.rag.use_rag:
+                caption = self.vlm.get_response(rgb_im, self.prompt_caption, [], device=self.device)[0]
+                rgb_path = os.path.join(episode_data_dir, "{}.png".format(cnt_step))
+                plt.imsave(rgb_path, rgb)
+                # 构建目标信息
+                objs_str = json.dumps(objs_info)
+                memory_text = f"{step_name}: agent position is {pts}. {caption} Objects: {objs_str}"
+                # self.knowledge_base.update_memory(f"{step_name}: agent position is {pts}. {caption}. Objects: {objs_str}", rgb_im, device=self.device)
+                self.knowledge_base.add_to_knowledge_base(memory_text, rgb_im, device=self.device)
+                # self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. Objects: {objs_str}", rgb_im, device=self.device)
+                # self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. {caption}", rgb_im, device=self.device)
+
             memory_time = time.time() - t
             result["step"][cnt_step]["memory_time"] = float(memory_time)
 
@@ -353,17 +362,17 @@ class MemoryEQA():
                 planner_time += (time.time() - t)
                 result["step"][cnt_step]["planner_time"] = float(planner_time)
                 
-
                 # 模型判断是否有信心回答当前问题
                 t = time.time()
+                kb = []
                 if self.cfg.rag.use_rag:
                     kb, _ = self.knowledge_base.search(self.prompt_rel.format(question), 
                                                rgb_im, 
-                                               top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
+                                               top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
                                                device=self.device)
                 smx_vlm_rel = self.vlm.get_response(rgb_im, self.prompt_rel.format(question), kb, device=self.device)[0].strip(".")
                 # smx_vlm_rel = self.vlm.get_response(self.prompt_rel.format(question), rgb_im, depth_im).strip(".")
-
+                logging.info(self.prompt_rel.format(question))
                 logging.info(f"Rel - Prob: {smx_vlm_rel}")
                 stop_time = time.time() - t
                 result["step"][cnt_step]["stop_time"] = float(stop_time)
@@ -373,7 +382,7 @@ class MemoryEQA():
                 if self.cfg.rag.use_rag:
                     kb, _ = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
                                                rgb_im, 
-                                               top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
+                                               top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
                                                device=self.device)
                 
                 smx_vlm_pred = self.vlm.get_response(rgb_im, self.prompt_question.format(vlm_question), kb, device=self.device)[0].strip(".")
@@ -384,10 +393,10 @@ class MemoryEQA():
                 result["step"][cnt_step]["answering_time"] = float(answering_time)
 
                 # save data
-                result["step"][cnt_step]["smx_vlm_rel"] = smx_vlm_rel[0]
-                result["step"][cnt_step]["smx_vlm_pred"] = smx_vlm_pred[0]
-                result["step"][cnt_step]["is_success"] = smx_vlm_pred[0] == answer
-
+                result["step"][cnt_step]["smx_vlm_rel"] = smx_vlm_rel
+                result["step"][cnt_step]["smx_vlm_pred"] = smx_vlm_pred
+                result["step"][cnt_step]["is_success"] = smx_vlm_pred == answer
+                
                 # 如果有信心回答，则直接获取答案
                 if smx_vlm_rel.lower() in self.confident_threshold:
                     break
@@ -428,7 +437,7 @@ class MemoryEQA():
                         if self.cfg.rag.use_rag:
                             kb, _ = self.knowledge_base.search(self.prompt_lsv.format(question), 
                                                        rgb_im, 
-                                                       top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
+                                                       top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
                                                        device=self.device)
                         response = self.vlm.get_response(rgb_im_draw, self.prompt_lsv.format(question), kb, device=self.device)[0]
                         # response = self.vlm.get_response(self.prompt_lsv.format(question), rgb_im_draw, depth_im)
@@ -447,12 +456,12 @@ class MemoryEQA():
                         if self.cfg.rag.use_rag:
                             kb, _ = self.knowledge_base.search(self.prompt_gsv.format(question), 
                                                        rgb_im, 
-                                                       top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
+                                                       top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
                                                        device=self.device)
                         response = self.vlm.get_response(rgb_im, self.prompt_gsv.format(question), kb, device=self.device)[0].strip(".")
                         # response = self.vlm.get_response(self.prompt_gsv.format(question), rgb_im, depth_im).strip(".")
                         gsv = np.zeros(2)
-                        if response == "Yes":
+                        if response.lower() == "yes":
                             gsv[0] = 1
                         else:
                             gsv[1] = 1
@@ -497,7 +506,7 @@ class MemoryEQA():
                     os.path.join(episode_data_dir, "map.png".format(cnt_step + 1))
                 )
                 plt.close()
-                
+
             rotation = quat_to_coeffs(
                 quat_from_angle_axis(angle, np.array([0, 1, 0]))
             ).tolist()
@@ -510,7 +519,7 @@ class MemoryEQA():
             if self.cfg.rag.use_rag:
                 kb, _ = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
                                            rgb_im, 
-                                           top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
+                                           top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
                                            device=self.device)
             smx_vlm_pred = self.vlm.get_response(rgb_im, self.prompt_question.format(vlm_question), kb, device=self.device)[0].strip(".")
             # smx_vlm_pred = self.vlm.get_response(self.prompt_question.format(vlm_question), rgb_im, depth_im).strip(".")
@@ -526,7 +535,6 @@ class MemoryEQA():
         logging.info(f"Scene: {scene}, Floor: {floor}")
         logging.info(f"Question:\n{vlm_question}\nAnswer: {answer}")
         logging.info(f"Success (max): {is_success}")
-        result["summary"]["smx_vlm_pred"] = smx_vlm_pred
         result["summary"]["smx_vlm_pred"] = smx_vlm_pred
         result["summary"]["is_success"] = is_success
         # result["summary"]["input_token_usage"] = int(self.vlm.input_token_usage)

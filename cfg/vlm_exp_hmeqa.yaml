@@ -22,8 +22,8 @@ rag:
 
 prompt:
   caption: f"Describe this image."
-  relevent: "\nConsider the question: '{}'. How confident are you in answering this question from your current perspective?\nA. Very low\nB. Low\nC. Medium\nD. High\nE. Very high\nAnswer with the option's letter from the given choices directly."
-  # relevent: "\nConsider the question: '{}'. Are you confident about answering the question with the current view? Answer with Yes or No."
+  # relevent: "\nConsider the question: '{}'. How confident are you in answering this question from your current perspective?\nA. Very low\nB. Low\nC. Medium\nD. High\nE. Very high\nAnswer with the option's letter from the given choices directly."
+  relevent: "\nConsider the question: '{}'. Are you confident about answering the question with the current view? Answer with Yes or No."
   question: "{}\nAnswer with the option's letter from the given choices directly."
   # question: "{}\nAnswer with the brief sentence."
   local_sem: "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Provide reasons and answer with a single letter."

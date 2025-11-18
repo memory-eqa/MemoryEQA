@@ -51,12 +51,15 @@ def evaluate(files_path):
     input_token_usage = 0
     output_token_usage = 0
 
+    success_count = 0
+
     for data in samples:
 
         path_length += data["summary"]["path_length"]
         time_comsume += data["summary"]["all_time_comsume"]
-        input_token_usage += data["summary"]["input_token_usage"]
-        output_token_usage += data["summary"]["output_token_usage"]
+
+        # input_token_usage += data["summary"]["input_token_usage"]
+        # output_token_usage += data["summary"]["output_token_usage"]
 
         result = {}
 
@@ -64,6 +67,9 @@ def evaluate(files_path):
         step_data = data['step']
         max_step = meta_data['max_steps']
         answer = meta_data['answer']
+        response = data["summary"]["smx_vlm_pred"][0]
+        if response == answer:
+            success_count += 1
 
         memory_time = 0
         planner_time = 0
@@ -96,8 +102,8 @@ def evaluate(files_path):
 
     path_length /= len(samples)
     time_comsume /= len(samples)
-    input_token_usage /= len(samples)
-    output_token_usage /= len(samples)
+    # input_token_usage /= len(samples)
+    # output_token_usage /= len(samples)
 
     memory_time /= len(samples)
     planner_time /= len(samples)
@@ -105,8 +111,8 @@ def evaluate(files_path):
     answering_time /= len(samples)
 
     print(f"Average path length: {path_length:.2f}")
-    print(f"Average input token usage: {input_token_usage:.2f}")
-    print(f"Average output token usage: {output_token_usage:.2f}")
+    # print(f"Average input token usage: {input_token_usage:.2f}")
+    # print(f"Average output token usage: {output_token_usage:.2f}")
     print(f"Average time comsume: {time_comsume:.2f}")
     print(f"Average memory time: {memory_time:.2f}")
     print(f"Average planner time: {planner_time:.2f}")
@@ -117,7 +123,7 @@ def evaluate(files_path):
     norm_steps = 0
     norm_early_steps = 0
     early_count = 0
-    success_count = 0
+    # success_count = 0
     for result in results:
         if result.get("is_success"):
             success_count += 1
@@ -141,8 +147,13 @@ def evaluate(files_path):
 
 if __name__ == '__main__':
     files_path = [
-        "results/full-memory/HM-EQA/HM-EQA_gpu0/results-0.json",
-        "results/full-memory/HM-EQA/HM-EQA_gpu2/results-400.json",
-        "results/full-memory/HM-EQA/HM-EQA_gpu5/results-1000.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu0/results.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu1/results.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu2/results.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu3/results.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu4/results.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu5/results.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu6/results.json",
+        "results/Qwen3VL/MT-HM3D-new.bak/MT-HM3D-new_gpu7/results.json",
     ]
     evaluate(files_path)

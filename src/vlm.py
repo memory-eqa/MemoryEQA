@@ -3,7 +3,7 @@ import logging
 import torch
 import numpy as np
 
-from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor, Qwen3VLForConditionalGeneration
 from qwen_vl_utils import process_vision_info
 from src.request_api import RequestAPI
 
@@ -16,7 +16,12 @@ class VLM:
         self.processor = None
         logging.info(f"Loading VLM model {model_id}")
 
-        if model_id in ["Qwen2-VL-2B-Instruct", "Qwen2-VL-72B-Instruct", "Qwen2-VL-7B-Instruct", "Qwen2-VL-72B-Instruct-GPTQ-Int4", "Qwen2-VL-72B-Instruct-GPTQ-Int8"]:
+        if model_id in ["Qwen2-VL-2B-Instruct", 
+                        "Qwen2-VL-72B-Instruct", 
+                        "Qwen2-VL-7B-Instruct", 
+                        "Qwen2-VL-72B-Instruct-GPTQ-Int4", 
+                        "Qwen2-VL-72B-Instruct-GPTQ-Int8",
+                        ]:
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                 cfg.model_name_or_path,
                 torch_dtype="auto",
@@ -24,7 +29,17 @@ class VLM:
                 device_map=device,
             )
             self.processor = AutoProcessor.from_pretrained(cfg.model_name_or_path)
-
+        elif model_id in [
+                        "Qwen3-VL-8B-Instruct",
+                        "Qwen3-VL-8B-Thinking",
+                        ]:
+            self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    cfg.model_name_or_path, 
+                    torch_dtype="auto",
+                    attn_implementation="flash_attention_2",
+                    device_map=device
+            )
+            self.processor = AutoProcessor.from_pretrained(cfg.model_name_or_path)
         elif model_id in ["GPT-4o"]:
             self.model = RequestAPI()
             
@@ -58,15 +73,15 @@ class VLM:
     def get_response_api(self, image, prompt, kb):
         return self.model.request_with_retry(image, prompt, kb)
 
-    def get_response_local(self, image=None, prompt=None, kb=None, device="cuda"):
+    def get_response_local(self, image=None, prompt=None, kb=[], device="cuda"):
         # 创建对话信息
         message = {
                 "role": "user",
                 "content": [],
         }
         # 添加知识库信息
-        context = []
-        for item in kb:
+        for idx, item in enumerate(kb):
+            # item["image"].save(f"tmp/{idx}.png")
             message["content"].append({
                     "type": "image",
                     "image": item['image'],
@@ -88,6 +103,8 @@ class VLM:
                 "text": prompt,
             })
         messages = [message]
+
+        print("=================Messages for VLM:", messages)
 
         # Preparation for inference
         text = self.processor.apply_chat_template(

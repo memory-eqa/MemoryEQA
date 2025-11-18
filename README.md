@@ -17,7 +17,7 @@ To evaluate EQA models' memory capabilities, we constructed the MT-HM3D dataset 
 Set up the conda environment (Linux, Python 3.9):
 ```
 conda env create -f environment.yml
-conda activate explore-eqa
+conda activate memory-eqa
 pip install -e .
 ```
 
@@ -41,6 +41,7 @@ Install transformers for qwenvl
 pip install git+https://github.com/huggingface/transformers
 pip install qwen-vl-utils
 ```
+
 
 Install [AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ)
 ```
