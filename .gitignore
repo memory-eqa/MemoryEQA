@@ -10,3 +10,4 @@ prismatic-vlms/
 src/llm_engine/VideoMind
 *.pdf
 results/
+src/llm_engine/VideoMind
