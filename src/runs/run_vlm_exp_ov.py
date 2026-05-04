@@ -39,7 +39,7 @@ from src.utils import interpolate_position_and_rotation, get_vlm_loss, get_vlm_r
 
 from src.vlm import VLM
 import clip
-from src.knowledgebase import DynamicKnowledgeBase
+from src.knowledgebase import StructuredMemory
 from sentence_transformers import SentenceTransformer
 
 import matplotlib.pyplot as plt
@@ -140,7 +140,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
     # init memory module
     rag_cfg = cfg.rag
     if rag_cfg.use_rag:
-        knowledge_base = DynamicKnowledgeBase(rag_cfg, device=device)
+        knowledge_base = StructuredMemory(rag_cfg, device=device)
 
     letters = ["A", "B", "C", "D"]  # always four
     fnt = ImageFont.truetype("data/Open_Sans/static/OpenSans-Regular.ttf", 30,)
@@ -306,7 +306,16 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                     # 当前帧加入知识库
                     # knowledge_base.add_text_data(f"{step_name}: position is {pts}, {caption}", device=device)
                     # knowledge_base.add_image_data(rgb_path, device=device)
-                    knowledge_base.add_to_knowledge_base(f"{step_name}: position is {pts}, {caption}", rgb_im, device=device)
+                    rot_quat = quat_to_coeffs(quaternion.from_rotation_matrix(cam_pose[:3, :3]))
+                    knowledge_base.add(
+                        image=rgb_im,
+                        position=pts,
+                        rotation=rot_quat,
+                        room_type="unknown",
+                        objects=[],
+                        caption=caption[0] if isinstance(caption, list) else caption,
+                        step=cnt_step,
+                        device=device)
 
             num_black_pixels = np.sum(
                 np.sum(rgb, axis=-1) == 0
@@ -327,19 +336,17 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
 
                 # 模型判断是否有信心回答当前问题
                 if rag_cfg.use_rag:
-                    kb = knowledge_base.search(prompt_rel.format(question), 
-                                               rgb_im, 
-                                               top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
-                                               device=device)
+                    kb, _ = knowledge_base.search(prompt_rel.format(question),
+                                                  rgb_im,
+                                                  device=device)
                 smx_vlm_rel = vlm.get_response(rgb_im, prompt_rel.format(question), kb, device=device)[0].strip(".")
                 logging.info(f"Rel - Prob: {smx_vlm_rel}")
 
                 logging.info(f"Prompt Pred: {prompt_question.format(vlm_question)}")
                 if rag_cfg.use_rag:
-                    kb = knowledge_base.search(prompt_question.format(vlm_question), 
-                                               rgb_im, 
-                                               top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
-                                               device=device)
+                    kb, _ = knowledge_base.search(prompt_question.format(vlm_question),
+                                                  rgb_im,
+                                                  device=device)
                 smx_vlm_pred = vlm.get_response(rgb_im, prompt_question.format(vlm_question), kb, device=device)[0].strip(".")
                 logging.info(f"Pred - Prob: {smx_vlm_pred}")
 
@@ -382,10 +389,9 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                     # get VLM reasoning for exploring
                     if cfg.use_lsv:
                         if rag_cfg.use_rag:
-                            kb = knowledge_base.search(prompt_lsv.format(question), 
-                                                       rgb_im, 
-                                                       top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
-                                                       device=device)
+                            kb, _ = knowledge_base.search(prompt_lsv.format(question),
+                                                          rgb_im,
+                                                          device=device)
                         response = vlm.get_response(rgb_im_draw, prompt_lsv.format(question), kb, device=device)[0]
                         lsv = np.zeros(actual_num_prompt_points)
                         for i in range(actual_num_prompt_points):
@@ -400,10 +406,9 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                     # base - use image without label
                     if cfg.use_gsv:
                         if rag_cfg.use_rag:
-                            kb = knowledge_base.search(prompt_gsv.format(question), 
-                                                       rgb_im, 
-                                                       top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
-                                                       device=device)
+                            kb, _ = knowledge_base.search(prompt_gsv.format(question),
+                                                          rgb_im,
+                                                          device=device)
                         response = vlm.get_response(rgb_im, prompt_gsv.format(question), kb, device=device)[0].strip(".")
                         gsv = np.zeros(2)
                         if response == "Yes":
@@ -460,10 +465,9 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
         if cnt_step == num_step - 1:
             logging.info("Max step reached!")
             if rag_cfg.use_rag:
-                kb = knowledge_base.search(prompt_question.format(vlm_question), 
-                                           rgb_im, 
-                                           top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
-                                           device=device)
+                kb, _ = knowledge_base.search(prompt_question.format(vlm_question),
+                                              rgb_im,
+                                              device=device)
             smx_vlm_pred = vlm.get_response(rgb_im, prompt_question.format(vlm_question), kb, device=device)[0].strip(".")
             logging.info(f"Pred - Prob: {smx_vlm_pred}")
 

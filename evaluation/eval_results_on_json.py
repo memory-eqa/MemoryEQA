@@ -1,7 +1,7 @@
 import os
 import json
 import numpy as np
-
+import csv
 # {
 #     "meta": {
 #         "question": "What is the relative volume of the SMX in the SMX?",
@@ -41,6 +41,14 @@ def load_jsons(files_path):
                 all_data.extend(json.load(file))
     return all_data
 
+def load_csv(file_path):
+    data_list = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)  # 自动用首行当作字段名
+        for row in reader:
+            data_list.append(dict(row))
+    return data_list
+
 def evaluate(files_path):
     samples = load_jsons(files_path)
     results = []
@@ -53,10 +61,31 @@ def evaluate(files_path):
 
     success_count = 0
 
+    csv_data = load_csv("data/MT-HM3D/MT-HM3D-filtered-new.csv")
+    org_data = {}
+    for iter, item in enumerate(csv_data):
+        org_data[iter] = item
+
+
+    cate_success = {
+        "Comparison": [0, 0],
+        "Relationship": [0, 0],
+        "Attribute": [0, 0],
+        "Counting": [0, 0],
+    }
+    cate_path = {
+        "Comparison": 0,
+        "Relationship": 0,
+        "Attribute": 0,
+        "Counting": 0,
+    }
+
     for data in samples:
 
         path_length += data["summary"]["path_length"]
         time_comsume += data["summary"]["all_time_comsume"]
+        question_id = data['meta']['question_ind']
+        question_type = org_data[question_id]['label']
 
         # input_token_usage += data["summary"]["input_token_usage"]
         # output_token_usage += data["summary"]["output_token_usage"]
@@ -70,6 +99,9 @@ def evaluate(files_path):
         response = data["summary"]["smx_vlm_pred"][0]
         if response == answer:
             success_count += 1
+            cate_success[question_type][0] += 1
+        else:
+            cate_success[question_type][1] += 1
 
         memory_time = 0
         planner_time = 0
@@ -98,6 +130,7 @@ def evaluate(files_path):
                 result["norm_early_success_step"] = step_num / max_step
             result["norm_success_step"] = step_num / max_step
             result["is_success"] = is_success
+        result["question_type"] = question_type
         results.append(result)
 
     path_length /= len(samples)
@@ -123,7 +156,7 @@ def evaluate(files_path):
     norm_steps = 0
     norm_early_steps = 0
     early_count = 0
-    # success_count = 0
+
     for result in results:
         if result.get("is_success"):
             success_count += 1
@@ -144,6 +177,14 @@ def evaluate(files_path):
         print(f"总共有{early_count}个结果提成功。")
         print(f"提早成功率为{early_count/results_num:.2%}")
         print(f"平均归一化提早成功步数为{norm_early_steps/early_count:.2}。")
+
+    for cate in cate_success:
+        suc, fail = cate_success[cate]
+        total = suc + fail
+        if total == 0:
+            continue
+        print(f"{cate}类别下共有{total}个结果，其中成功的有{suc}个。")
+        print(f"成功率为{suc/total:.2%}。")
 
 if __name__ == '__main__':
     files_path = [

@@ -46,7 +46,7 @@ from src.utils import (
 
 from src.vlm import VLM
 # from src.llm_engine.spatial_bot import VLM
-from src.knowledgebase import DynamicKnowledgeBase
+from src.knowledgebase import StructuredMemory
 from ultralytics import YOLO
 
 import matplotlib.pyplot as plt
@@ -68,10 +68,14 @@ class MemoryEQA():
         # init prompts
         prompt = cfg.prompt
         self.prompt_caption = prompt.caption
+        self.prompt_room_caption = prompt.room_caption
         self.prompt_rel = prompt.relevent
         self.prompt_question = prompt.question
         self.prompt_lsv = prompt.local_sem
         self.prompt_gsv = prompt.global_sem
+        self.query_planner = prompt.planner_query
+        self.query_stopping = prompt.stopping_query
+        self.query_answering = prompt.answering_query
 
         # load init pose data
         with open(cfg.init_pose_data_path) as f:
@@ -92,7 +96,7 @@ class MemoryEQA():
 
         # init memory module
         if cfg.rag.use_rag:
-            self.knowledge_base = DynamicKnowledgeBase(cfg.rag, device=self.device)
+            self.knowledge_base = StructuredMemory(cfg.rag, device=self.device)
         # init detector 'yolov12{n/s/m/l/x}.pt'
         self.detector = YOLO(cfg.detector)
 
@@ -303,8 +307,7 @@ class MemoryEQA():
             depth_im = Image.fromarray(depth)
             rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
 
-            room = self.vlm.get_response(rgb_im, "What room are you most likely to be in at the moment? Answer with a phrase", [], device=self.device)[0]
-            # room = self.vlm.get_response("What room are you most likely to be in at the moment? Answer with a phrase", rgb_im, depth_im)
+            room = self.vlm.get_response(rgb_im, self.prompt_room_caption, [], device=self.device)[0]
             
             t = time.time()
             objects = self.detector(rgb_im)[0]
@@ -333,13 +336,21 @@ class MemoryEQA():
                 caption = self.vlm.get_response(rgb_im, self.prompt_caption, [], device=self.device)[0]
                 rgb_path = os.path.join(episode_data_dir, "{}.png".format(cnt_step))
                 plt.imsave(rgb_path, rgb)
-                # 构建目标信息
-                objs_str = json.dumps(objs_info)
-                memory_text = f"{step_name}: agent position is {pts}. {caption} Objects: {objs_str}"
-                # self.knowledge_base.update_memory(f"{step_name}: agent position is {pts}. {caption}. Objects: {objs_str}", rgb_im, device=self.device)
-                self.knowledge_base.add_to_knowledge_base(memory_text, rgb_im, device=self.device)
-                # self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. Objects: {objs_str}", rgb_im, device=self.device)
-                # self.knowledge_base.add_to_knowledge_base(f"{step_name}: agent position is {pts}. {caption}", rgb_im, device=self.device)
+
+                # Get agent rotation quaternion from camera pose
+                rot_quat = quat_to_coeffs(quaternion.from_rotation_matrix(cam_pose[:3, :3]))
+
+                entry_id, action = self.knowledge_base.add(
+                    image=rgb_im,
+                    position=pts,
+                    rotation=rot_quat,
+                    room_type=room,
+                    objects=objs_info,
+                    caption=caption,
+                    step=cnt_step,
+                    device=self.device,
+                )
+                logging.info(f"Memory {action} entry {entry_id} at step {cnt_step}")
 
             memory_time = time.time() - t
             result["step"][cnt_step]["memory_time"] = float(memory_time)
@@ -366,24 +377,25 @@ class MemoryEQA():
                 t = time.time()
                 kb = []
                 if self.cfg.rag.use_rag:
-                    kb, _ = self.knowledge_base.search(self.prompt_rel.format(question), 
-                                               rgb_im, 
-                                               top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
-                                               device=self.device)
+                    logging.info(f"Prompt stopping query: {self.query_stopping.format(objs_info, question)}")
+                    kb, _ = self.knowledge_base.search(
+                        self.query_stopping.format(objs_info, question),
+                        rgb_im,
+                        device=self.device)
                 smx_vlm_rel = self.vlm.get_response(rgb_im, self.prompt_rel.format(question), kb, device=self.device)[0].strip(".")
-                # smx_vlm_rel = self.vlm.get_response(self.prompt_rel.format(question), rgb_im, depth_im).strip(".")
                 logging.info(self.prompt_rel.format(question))
                 logging.info(f"Rel - Prob: {smx_vlm_rel}")
+
                 stop_time = time.time() - t
                 result["step"][cnt_step]["stop_time"] = float(stop_time)
 
                 t = time.time()
-                logging.info(f"Prompt Pred: {self.prompt_question.format(vlm_question)}")
                 if self.cfg.rag.use_rag:
-                    kb, _ = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
-                                               rgb_im, 
-                                               top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
-                                               device=self.device)
+                    logging.info(f"Prompt Pred: {self.prompt_question.format(vlm_question)}")
+                    kb, _ = self.knowledge_base.search(
+                        self.query_answering.format(vlm_question, objs_info),
+                        rgb_im,
+                        device=self.device)
                 
                 smx_vlm_pred = self.vlm.get_response(rgb_im, self.prompt_question.format(vlm_question), kb, device=self.device)[0].strip(".")
                 # smx_vlm_pred = self.vlm.get_response(self.prompt_question.format(vlm_question), rgb_im, depth_im).strip(".")
@@ -431,15 +443,27 @@ class MemoryEQA():
                                                self.fnt, 
                                                os.path.join(episode_data_dir, f"{cnt_step}_draw.png"))
 
+                    # Innovation 4: Retrieving spatial context from global memory for planner
+                    spatial_ctx = ""
+                    if self.cfg.rag.use_rag:
+                        spatial_ctx = self.knowledge_base.get_global_spatial_context(
+                            pts_normal, radius=5.0
+                        )
+                        if spatial_ctx:
+                            logging.info(f"Planner spatial context: {spatial_ctx}")
+
                     # get VLM reasoning for exploring
                     t = time.time()
                     if self.cfg.use_lsv:
                         if self.cfg.rag.use_rag:
-                            kb, _ = self.knowledge_base.search(self.prompt_lsv.format(question), 
-                                                       rgb_im, 
-                                                       top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
-                                                       device=self.device)
-                        response = self.vlm.get_response(rgb_im_draw, self.prompt_lsv.format(question), kb, device=self.device)[0]
+                            kb, _ = self.knowledge_base.search(
+                                self.prompt_lsv.format(question),
+                                rgb_im,
+                                device=self.device)
+                        lsv_prompt = self.prompt_lsv.format(question)
+                        if spatial_ctx:
+                            lsv_prompt += f"\n[Memory context] {spatial_ctx}"
+                        response = self.vlm.get_response(rgb_im_draw, lsv_prompt, kb, device=self.device)[0]
                         # response = self.vlm.get_response(self.prompt_lsv.format(question), rgb_im_draw, depth_im)
                         lsv = np.zeros(actual_num_prompt_points)
                         for i in range(actual_num_prompt_points):
@@ -454,11 +478,14 @@ class MemoryEQA():
                     # base - use image without label
                     if self.cfg.use_gsv:
                         if self.cfg.rag.use_rag:
-                            kb, _ = self.knowledge_base.search(self.prompt_gsv.format(question), 
-                                                       rgb_im, 
-                                                       top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
-                                                       device=self.device)
-                        response = self.vlm.get_response(rgb_im, self.prompt_gsv.format(question), kb, device=self.device)[0].strip(".")
+                            kb, _ = self.knowledge_base.search(
+                                self.prompt_gsv.format(question),
+                                rgb_im,
+                                device=self.device)
+                        gsv_prompt = self.prompt_gsv.format(question)
+                        if spatial_ctx:
+                            gsv_prompt += f"\n[Memory context] {spatial_ctx}"
+                        response = self.vlm.get_response(rgb_im, gsv_prompt, kb, device=self.device)[0].strip(".")
                         # response = self.vlm.get_response(self.prompt_gsv.format(question), rgb_im, depth_im).strip(".")
                         gsv = np.zeros(2)
                         if response.lower() == "yes":
@@ -517,10 +544,17 @@ class MemoryEQA():
         if cnt_step == num_step - 1:
             logging.info("Max step reached!")
             if self.cfg.rag.use_rag:
-                kb, _ = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
-                                           rgb_im, 
-                                           top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step+1,
-                                           device=self.device)
+                # Innovation 4: Final planner query enhanced with global room summary
+                room_summary = self.knowledge_base.get_room_summary()
+                enhanced_planner_query = self.query_planner.format(
+                    f"position: {pts_normal}, angle: {angle}", objs_info, question
+                )
+                if room_summary:
+                    enhanced_planner_query += f"\n[Global room summary]\n{room_summary}"
+                kb, _ = self.knowledge_base.search(
+                    enhanced_planner_query,
+                    rgb_im,
+                    device=self.device)
             smx_vlm_pred = self.vlm.get_response(rgb_im, self.prompt_question.format(vlm_question), kb, device=self.device)[0].strip(".")
             # smx_vlm_pred = self.vlm.get_response(self.prompt_question.format(vlm_question), rgb_im, depth_im).strip(".")
             logging.info(f"Pred - Prob: {smx_vlm_pred}")

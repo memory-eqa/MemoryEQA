@@ -20,14 +20,29 @@ rag:
   dim: 1536
   max_retrieval_num: 5
 
+  # Viewpoint-aware update (Innovation 2)
+  use_viewpoint_update: True
+  viewpoint_beta_p: 0.5
+  viewpoint_beta_r: 0.5
+  viewpoint_visual_sim: 0.85
+  viewpoint_obj_sim: 0.7
+
+  # Entropy-based adaptive retrieval (Innovation 3)
+  use_entropy_retrieval: True
+  entropy_alpha_e: 0.3
+  entropy_alpha_s: 0.7
+  entropy_search_multiplier: 3
+
 prompt:
   caption: f"Briefly describe this image."
+  room_caption: "What room are you most likely to be in at the moment? Answer with a phrase."
   relevent: "\nConsider the question: '{}'. How confident are you in answering this question from your current perspective?\nA. Very low\nB. Low\nC. Medium\nD. High\nE. Very high\nAnswer with the option's letter from the given choices directly."
-  # relevent: "\nConsider the question: '{}'. Are you confident about answering the question with the current view? Answer with Yes or No."
   question: "{}\nAnswer with the option's single letter from the given choices directly."
-  # question: "{}\nAnswer with the brief sentence."
   local_sem: "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Provide reasons and answer with a single letter."
   global_sem: "\nConsider the question: '{}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
+  planner_query: "\nRetrieve memory entries describing the spatial layout and previously observed regions near the current viewpoint. \nCurrent viewpoint: {} \nVisible objects: {} \nGoal type: {} \nReturn memory that contains navigable regions, unexplored frontiers, and previously seen locations relevant to planning the next movement."
+  stopping_query: "\nRetrieve memory entries related to the existence, location, or appearance of the target object or target region. \nCurrent observation: {} \nTarget specification: {} \nReturn memory that may indicate the target has been found or is likely within the currently observed region."
+  answering_query: "\nRetrieve memory entries that contain semantic information relevant to answering the question. \nQuestion: {} \nCurrent observation: {} \nReturn memory that includes object attributes, spatial relations, and scene facts related to the queried concept."
 
 detector: '/home/zml/model/YOLO/yolo11x.pt'
 

@@ -20,6 +20,19 @@ rag:
   dim: 1536
   max_retrieval_num: 5
 
+  # Viewpoint-aware update (Innovation 2)
+  use_viewpoint_update: True
+  viewpoint_beta_p: 0.5
+  viewpoint_beta_r: 0.5
+  viewpoint_visual_sim: 0.85
+  viewpoint_obj_sim: 0.7
+
+  # Entropy-based adaptive retrieval (Innovation 3)
+  use_entropy_retrieval: True
+  entropy_alpha_e: 0.3
+  entropy_alpha_s: 0.7
+  entropy_search_multiplier: 3
+
 prompt:
   caption: f"Describe this image."
   relevent: "\nConsider the question: '{}'. How confident are you in answering this question from your current perspective?\nA. Very low\nB. Low\nC. Medium\nD. High\nE. Very high\nAnswer with the option's letter from the given choices directly."
